@@ -1,0 +1,101 @@
+spring:
+  application:
+    name: dhaka-run-backend
+  session:
+    store-type: none
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/dhaka_run
+    username: ${DB_USERNAME:dhaka_user}
+    password: ${DB_PASSWORD:dhaka_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 20
+    show-sql: false
+    open-in-view: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+app:
+  dhaka:
+    bounds:
+      north: 23.9500
+      south: 23.7000
+      east: 90.5000
+      west: 90.3000
+
+  datasource:
+    openaq:
+      base-url: https://api.openaq.org/v3
+      api-key: ${OPENAQ_API_KEY:b1cf900da62dc452a92e5208a2975d1e87f9940195f3d1bb36ce001369a3e09e}
+      timeout: 10s
+
+    openmeteo:
+      base-url: https://api.open-meteo.com/v1
+      timeout: 10s
+
+  scheduler:
+    air-quality:
+      cron: "0 */10 * * * *"
+    weather:
+      cron: "0 */30 * * * *"
+
+  cache:
+    ttl:
+      summary: 120
+      details: 300
+      forecast: 1800
+
+  bootstrap:
+    enabled: true
+    city: Dhaka
+    location-limit: 1000
+    force-refresh: false
+
+logging:
+  level:
+    com.dhakarun: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
