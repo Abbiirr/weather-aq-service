@@ -5,9 +5,7 @@ import com.dhakarun.domain.running.model.HealthRisk;
 import com.dhakarun.domain.running.model.RunCondition;
 import com.dhakarun.domain.running.model.RunVerdict;
 import com.dhakarun.domain.weather.model.WeatherReading;
-import org.springframework.stereotype.Component;
 
-@Component
 public class RunConditionEvaluator {
 
     public RunCondition evaluate(AirQualityReading airQuality, WeatherReading weather) {
@@ -37,3 +35,4 @@ public class RunConditionEvaluator {
         return new RunCondition(locationId, verdict, new HealthRisk(message));
     }
 }
+

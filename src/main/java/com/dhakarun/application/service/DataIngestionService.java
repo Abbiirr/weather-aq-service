@@ -2,6 +2,7 @@ package com.dhakarun.application.service;
 
 import com.dhakarun.application.port.in.IngestAirQualityCommand;
 import com.dhakarun.application.port.in.IngestWeatherCommand;
+import com.dhakarun.application.port.in.RefreshLocationDataUseCase;
 import com.dhakarun.application.port.out.AirQualityDataSource;
 import com.dhakarun.application.port.out.WeatherDataSource;
 import com.dhakarun.domain.airquality.model.AirQualityReading;
@@ -13,7 +14,7 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 
 @Service
-public class DataIngestionService {
+public class DataIngestionService implements RefreshLocationDataUseCase {
 
     private final AirQualityDataSource airQualityDataSource;
     private final WeatherDataSource weatherDataSource;
@@ -53,22 +54,12 @@ public class DataIngestionService {
         weatherRepository.save(reading);
     }
 
-    public RefreshResult refreshFromDataSources(LocationId locationId) {
+    @Override
+    public RefreshResult refresh(LocationId locationId) {
         Optional<AirQualityReading> airQuality = airQualityDataSource.fetchLatest(locationId)
             .map(airQualityRepository::save);
         Optional<WeatherReading> weather = weatherDataSource.fetchLatest(locationId)
             .map(weatherRepository::save);
         return new RefreshResult(airQuality, weather);
-    }
-
-    // New overload to avoid referencing LocationId in callers
-    public RefreshResult refreshFromDataSources(String locationId) {
-        return refreshFromDataSources(new LocationId(locationId));
-    }
-
-    public record RefreshResult(
-        Optional<AirQualityReading> airQuality,
-        Optional<WeatherReading> weather
-    ) {
     }
 }

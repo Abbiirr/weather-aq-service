@@ -112,25 +112,74 @@ public class OpenAQClient {
     }
 
     public List<OpenAQLocation> fetchLocationsByCity(String city, int limit) {
-        // Normalize the city name to handle case sensitivity
-        String normalizedCity = city.trim();
-        
-        String url = UriComponentsBuilder.fromHttpUrl(properties.baseUrl() + "/locations")
-            .queryParam("city", normalizedCity)
-            .queryParam("limit", limit)
-            .toUriString();
+        // OpenAQ v3 API doesn't support city parameter directly
+        // Strategy:
+        // 1. For known cities like Dhaka, use country filtering + client-side city filter
+        // 2. Otherwise, fetch broader results and filter client-side
+
+        String normalizedCity = city.trim().toLowerCase();
+
+        // Special handling for known cities
+        Integer countryId = null;
+        if (normalizedCity.contains("dhaka")) {
+            countryId = 128; // Bangladesh
+        } else if (normalizedCity.contains("delhi") || normalizedCity.contains("mumbai") ||
+                   normalizedCity.contains("bangalore") || normalizedCity.contains("kolkata")) {
+            countryId = 9; // India
+        }
+
+        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromHttpUrl(properties.baseUrl() + "/locations");
+
+        if (countryId != null) {
+            // Use country filter for better performance
+            uriBuilder.queryParam("countries_id", countryId);
+            uriBuilder.queryParam("limit", 500); // Get more results from specific country
+        } else {
+            // Fallback to fetching more results globally
+            uriBuilder.queryParam("limit", 1000);
+        }
+
+        String url = uriBuilder.toUriString();
 
         try {
-            log.info("Fetching locations from OpenAQ API v3 for city: {}", normalizedCity);
+            log.info("Fetching locations from OpenAQ API v3 for city '{}' (country_id: {})", city, countryId);
             ResponseEntity<OpenAQLocationsResponse> response = restTemplate.exchange(
                 url, HttpMethod.GET, new HttpEntity<>(defaultHeaders()), OpenAQLocationsResponse.class);
 
             if (response.getBody() != null && response.getBody().results() != null) {
-                log.info("Fetched {} locations for {}", response.getBody().results().size(), normalizedCity);
-                return response.getBody().results();
+                // Filter by city name (case-insensitive partial match)
+                List<OpenAQLocation> filteredLocations = response.getBody().results().stream()
+                    .filter(location -> {
+                        if (location.city() == null) return false;
+                        String locationCity = location.city().toLowerCase();
+                        // Check if location city contains search term or vice versa
+                        return locationCity.contains(normalizedCity) || normalizedCity.contains(locationCity);
+                    })
+                    .limit(limit)
+                    .toList();
+
+                log.info("Found {} locations for city '{}' from {} total results",
+                    filteredLocations.size(), city, response.getBody().results().size());
+
+                // If no results found with city filter, try location name as fallback
+                if (filteredLocations.isEmpty() && response.getBody().results() != null) {
+                    filteredLocations = response.getBody().results().stream()
+                        .filter(location -> {
+                            if (location.name() == null) return false;
+                            return location.name().toLowerCase().contains(normalizedCity);
+                        })
+                        .limit(limit)
+                        .toList();
+
+                    if (!filteredLocations.isEmpty()) {
+                        log.info("Found {} locations by name match for '{}'", filteredLocations.size(), city);
+                    }
+                }
+
+                return filteredLocations;
             }
         } catch (Exception e) {
-            log.error("Failed to fetch locations from OpenAQ for city: {}", normalizedCity, e);
+            log.error("Failed to fetch locations from OpenAQ for city: {}", city, e);
         }
 
         return List.of();

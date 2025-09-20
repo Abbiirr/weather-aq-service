@@ -1,16 +1,13 @@
 package com.dhakarun.adapter.in.startup;
 
-import com.dhakarun.application.service.DataIngestionService;
-import com.dhakarun.domain.location.model.Location;
-import com.dhakarun.domain.location.repository.LocationRepository;
+import com.dhakarun.application.port.in.ListLocationsUseCase;
+import com.dhakarun.application.port.in.RefreshLocationDataUseCase;
+import com.dhakarun.application.shared.PageQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -19,12 +16,15 @@ public class StartupIngestionRunner implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(StartupIngestionRunner.class);
 
-    private final DataIngestionService dataIngestionService;
-    private final LocationRepository locationRepository;
+    private final RefreshLocationDataUseCase refreshLocationDataUseCase;
+    private final ListLocationsUseCase listLocationsUseCase;
 
-    public StartupIngestionRunner(DataIngestionService dataIngestionService, LocationRepository locationRepository) {
-        this.dataIngestionService = dataIngestionService;
-        this.locationRepository = locationRepository;
+    public StartupIngestionRunner(
+        RefreshLocationDataUseCase refreshLocationDataUseCase,
+        ListLocationsUseCase listLocationsUseCase
+    ) {
+        this.refreshLocationDataUseCase = refreshLocationDataUseCase;
+        this.listLocationsUseCase = listLocationsUseCase;
     }
 
     @Override
@@ -36,12 +36,14 @@ public class StartupIngestionRunner implements ApplicationRunner {
 
     private void processAllLocations(int pageSize) {
         int page = 0;
-        Page<Location> result;
+        boolean hasNext;
         do {
-            Pageable pageable = PageRequest.of(page, pageSize);
-            result = locationRepository.findAll(pageable);
-            result.getContent().forEach(loc -> dataIngestionService.refreshFromDataSources(loc.getId().value()));
+            var pageResult = listLocationsUseCase.list(new PageQuery(page, pageSize));
+            pageResult.content().forEach(location ->
+                refreshLocationDataUseCase.refresh(location.getId())
+            );
+            hasNext = pageResult.hasNext();
             page++;
-        } while (!result.isEmpty() && result.hasNext());
+        } while (hasNext);
     }
 }

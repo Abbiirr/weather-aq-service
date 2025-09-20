@@ -4,8 +4,11 @@ import com.dhakarun.adapter.in.web.dto.LocationDetailsResponse;
 import com.dhakarun.adapter.in.web.dto.LocationSummaryResponse;
 import com.dhakarun.adapter.in.web.dto.PageResponse;
 import com.dhakarun.adapter.in.web.mapper.LocationDtoMapper;
-import com.dhakarun.application.service.DataIngestionService;
-import com.dhakarun.application.service.LocationQueryService;
+import com.dhakarun.application.port.in.BrowseLocationsUseCase;
+import com.dhakarun.application.port.in.GetLocationDetailsUseCase;
+import com.dhakarun.application.port.in.GetLocationSummaryUseCase;
+import com.dhakarun.application.port.in.RefreshLocationDataUseCase;
+import com.dhakarun.application.shared.PageQuery;
 import com.dhakarun.domain.location.model.LocationId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,18 +27,24 @@ public class LocationController {
 
     private static final Logger log = LoggerFactory.getLogger(LocationController.class);
 
-    private final LocationQueryService locationQueryService;
+    private final GetLocationSummaryUseCase getLocationSummaryUseCase;
+    private final GetLocationDetailsUseCase getLocationDetailsUseCase;
+    private final BrowseLocationsUseCase browseLocationsUseCase;
+    private final RefreshLocationDataUseCase refreshLocationDataUseCase;
     private final LocationDtoMapper mapper;
-    private final DataIngestionService dataIngestionService;
 
     public LocationController(
-        LocationQueryService locationQueryService,
-        LocationDtoMapper mapper,
-        DataIngestionService dataIngestionService
+        GetLocationSummaryUseCase getLocationSummaryUseCase,
+        GetLocationDetailsUseCase getLocationDetailsUseCase,
+        BrowseLocationsUseCase browseLocationsUseCase,
+        RefreshLocationDataUseCase refreshLocationDataUseCase,
+        LocationDtoMapper mapper
     ) {
-        this.locationQueryService = locationQueryService;
+        this.getLocationSummaryUseCase = getLocationSummaryUseCase;
+        this.getLocationDetailsUseCase = getLocationDetailsUseCase;
+        this.browseLocationsUseCase = browseLocationsUseCase;
+        this.refreshLocationDataUseCase = refreshLocationDataUseCase;
         this.mapper = mapper;
-        this.dataIngestionService = dataIngestionService;
     }
 
     @GetMapping
@@ -43,15 +52,15 @@ public class LocationController {
         @RequestParam(defaultValue = "0") int page,
         @RequestParam(defaultValue = "20") int size
     ) {
-        var summaries = locationQueryService.getAllSummaries(page, size);
-        var content = summaries.getContent().stream()
+        var summaries = browseLocationsUseCase.browse(new PageQuery(page, size));
+        var content = summaries.content().stream()
             .map(mapper::toSummary)
             .toList();
 
         return new PageResponse<>(
-            summaries.getNumber(),
-            summaries.getSize(),
-            summaries.getTotalElements(),
+            summaries.page(),
+            summaries.size(),
+            summaries.totalElements(),
             content
         );
     }
@@ -59,7 +68,7 @@ public class LocationController {
     @GetMapping("/{locationId}/summary")
     public LocationSummaryResponse getSummary(@PathVariable String locationId) {
         try {
-            var summary = locationQueryService.getSummary(new LocationId(locationId));
+            var summary = getLocationSummaryUseCase.getSummary(new LocationId(locationId));
             return mapper.toSummary(summary);
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage(), ex);
@@ -69,7 +78,7 @@ public class LocationController {
     @GetMapping("/{locationId}")
     public LocationDetailsResponse getDetails(@PathVariable String locationId) {
         try {
-            var details = locationQueryService.getDetails(new LocationId(locationId));
+            var details = getLocationDetailsUseCase.getDetails(new LocationId(locationId));
             return mapper.toDetails(details);
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage(), ex);
@@ -78,6 +87,7 @@ public class LocationController {
 
     @PostMapping("/{locationId}/refresh")
     public void refresh(@PathVariable String locationId) {
-        dataIngestionService.refreshFromDataSources(new LocationId(locationId));
+        log.debug("Manual refresh requested for location {}", locationId);
+        refreshLocationDataUseCase.refresh(locationId);
     }
 }

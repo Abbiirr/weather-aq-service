@@ -1,8 +1,7 @@
 package com.dhakarun.application.bootstrap;
 
 import com.dhakarun.adapter.out.datasource.openaq.OpenAQClient;
-import com.dhakarun.adapter.out.datasource.openaq.dto.OpenAQLocation;
-import com.dhakarun.domain.location.model.Coordinates;
+import com.dhakarun.adapter.out.datasource.openaq.dto.OpenAQLocation;\r\nimport com.dhakarun.application.port.out.LocationReadPort;\r\nimport com.dhakarun.application.shared.PageQuery;\r\nimport com.dhakarun.domain.location.model.Coordinates;
 import com.dhakarun.domain.location.model.Location;
 import com.dhakarun.domain.location.model.LocationId;
 import com.dhakarun.domain.location.model.LocationType;
@@ -17,7 +16,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -26,8 +24,7 @@ public class LocationBootstrapService implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(LocationBootstrapService.class);
 
-    private final LocationRepository locationRepository;
-    private final OpenAQClient openAQClient;
+    private final LocationRepository locationRepository;\r\n    private final LocationReadPort locationReadPort;\r\n    private final OpenAQClient openAQClient;
 
     @Value("${app.bootstrap.enabled:true}")
     private boolean bootstrapEnabled;
@@ -41,10 +38,7 @@ public class LocationBootstrapService implements ApplicationRunner {
     @Value("${app.bootstrap.force-refresh:false}")
     private boolean forceRefresh;
 
-    public LocationBootstrapService(LocationRepository locationRepository, OpenAQClient openAQClient) {
-        this.locationRepository = locationRepository;
-        this.openAQClient = openAQClient;
-    }
+    public LocationBootstrapService(LocationRepository locationRepository, LocationReadPort locationReadPort, OpenAQClient openAQClient) {\r\n        this.locationRepository = locationRepository;\r\n        this.locationReadPort = locationReadPort;\r\n        this.openAQClient = openAQClient;\r\n    }
 
     @Override
     public void run(ApplicationArguments args) {
@@ -55,7 +49,7 @@ public class LocationBootstrapService implements ApplicationRunner {
 
         long existingCount = 0L;
         try {
-            existingCount = locationRepository.findAll(PageRequest.of(0, 1)).getTotalElements();
+            existingCount = locationReadPort.fetchPage(new PageQuery(0, 1)).totalElements();
         } catch (Exception e) {
             log.debug("Could not determine existing location count via paging; proceeding.", e);
         }
@@ -193,3 +187,7 @@ public class LocationBootstrapService implements ApplicationRunner {
         return s == null ? "<unknown>" : s;
     }
 }
+
+
+
+

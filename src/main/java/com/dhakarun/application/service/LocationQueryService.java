@@ -1,7 +1,13 @@
 package com.dhakarun.application.service;
 
+import com.dhakarun.application.port.in.BrowseLocationsUseCase;
 import com.dhakarun.application.port.in.GetLocationDetailsUseCase;
 import com.dhakarun.application.port.in.GetLocationSummaryUseCase;
+import com.dhakarun.application.port.in.ListLocationsUseCase;
+import com.dhakarun.application.port.in.RefreshLocationDataUseCase;
+import com.dhakarun.application.port.out.LocationReadPort;
+import com.dhakarun.application.shared.PageQuery;
+import com.dhakarun.application.shared.PageResult;
 import com.dhakarun.domain.airquality.model.AirQualityReading;
 import com.dhakarun.domain.airquality.repository.AirQualityRepository;
 import com.dhakarun.domain.location.model.Location;
@@ -12,28 +18,33 @@ import com.dhakarun.domain.running.model.RunVerdict;
 import com.dhakarun.domain.running.service.RunConditionEvaluator;
 import com.dhakarun.domain.weather.model.WeatherReading;
 import com.dhakarun.domain.weather.repository.WeatherRepository;
-
 import java.util.Optional;
-
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
-public class LocationQueryService implements GetLocationSummaryUseCase, GetLocationDetailsUseCase {
+public class LocationQueryService implements
+    GetLocationSummaryUseCase,
+    GetLocationDetailsUseCase,
+    BrowseLocationsUseCase,
+    ListLocationsUseCase {
 
     private final LocationRepository locationRepository;
     private final AirQualityRepository airQualityRepository;
     private final WeatherRepository weatherRepository;
     private final RunConditionEvaluator runConditionEvaluator;
-    private final DataIngestionService dataIngestionService;
-
+    private final RefreshLocationDataUseCase refreshLocationDataUseCase;
+    private final LocationReadPort locationReadPort;
 
     @Override
-    public LocationSummaryView getSummary(LocationId locationId) {
+    public GetLocationSummaryUseCase.LocationSummaryView getSummary(LocationId locationId) {
+        Location location = findLocation(locationId);
+        return buildSummaryView(locationId, location.getName());
+    }
+
+    @Override
+    public GetLocationDetailsUseCase.LocationDetailsView getDetails(LocationId locationId) {
         Location location = findLocation(locationId);
         AirQualityReading airQuality = airQualityRepository.findLatestByLocation(locationId).orElse(null);
         WeatherReading weather = weatherRepository.findLatestByLocation(locationId).orElse(null);
@@ -43,20 +54,36 @@ public class LocationQueryService implements GetLocationSummaryUseCase, GetLocat
         weather = readings.weather();
 
         Optional<RunCondition> runCondition = buildRunCondition(airQuality, weather);
-        return new LocationSummaryView(
-                locationId,
-                location.getName(),
-                airQuality != null ? airQuality.getAqi().value() : 0,
-                weather != null ? weather.getTemperature().valueCelsius() : Double.NaN,
-                weather != null ? weather.getHumidity().percentage() : Double.NaN,
-                runCondition.map(rc -> rc.verdict().name()).orElse(RunVerdict.ACCEPTABLE.name()),
-                runCondition.map(rc -> rc.healthRisk().message()).orElse("Data unavailable")
+        return new GetLocationDetailsUseCase.LocationDetailsView(
+            location,
+            airQuality,
+            weather,
+            runCondition.map(rc -> rc.verdict().name()).orElse(RunVerdict.ACCEPTABLE.name()),
+            runCondition.map(rc -> rc.healthRisk().message()).orElse("Data unavailable")
         );
     }
 
     @Override
-    public LocationDetailsView getDetails(LocationId locationId) {
-        Location location = findLocation(locationId);
+    public PageResult<Location> list(PageQuery query) {
+        return locationReadPort.fetchPage(query);
+    }
+
+    @Override
+    public PageResult<GetLocationSummaryUseCase.LocationSummaryView> browse(PageQuery query) {
+        var locationsPage = locationReadPort.fetchPage(query);
+        var content = locationsPage.content().stream()
+            .map(location -> buildSummaryView(location.getId(), location.getName()))
+            .toList();
+        return new PageResult<>(
+            locationsPage.page(),
+            locationsPage.size(),
+            locationsPage.totalElements(),
+            locationsPage.hasNext(),
+            content
+        );
+    }
+
+    private GetLocationSummaryUseCase.LocationSummaryView buildSummaryView(LocationId locationId, String locationName) {
         AirQualityReading airQuality = airQualityRepository.findLatestByLocation(locationId).orElse(null);
         WeatherReading weather = weatherRepository.findLatestByLocation(locationId).orElse(null);
 
@@ -65,38 +92,40 @@ public class LocationQueryService implements GetLocationSummaryUseCase, GetLocat
         weather = readings.weather();
 
         Optional<RunCondition> runCondition = buildRunCondition(airQuality, weather);
-        return new LocationDetailsView(
-                location,
-                airQuality,
-                weather,
-                runCondition.map(rc -> rc.verdict().name()).orElse(RunVerdict.ACCEPTABLE.name()),
-                runCondition.map(rc -> rc.healthRisk().message()).orElse("Data unavailable")
+        return new GetLocationSummaryUseCase.LocationSummaryView(
+            locationId,
+            locationName,
+            airQuality != null ? airQuality.getAqi().value() : 0,
+            weather != null ? weather.getTemperature().valueCelsius() : Double.NaN,
+            weather != null ? weather.getHumidity().percentage() : Double.NaN,
+            runCondition.map(rc -> rc.verdict().name()).orElse(RunVerdict.ACCEPTABLE.name()),
+            runCondition.map(rc -> rc.healthRisk().message()).orElse("Data unavailable")
         );
     }
 
     private Location findLocation(LocationId locationId) {
         return locationRepository.findById(locationId)
-                .orElseThrow(() -> new IllegalArgumentException("Location not found: " + locationId.value()));
+            .orElseThrow(() -> new IllegalArgumentException("Location not found: " + locationId.value()));
     }
 
     private Readings ensureReadings(
-            LocationId locationId,
-            AirQualityReading currentAirQuality,
-            WeatherReading currentWeather
+        LocationId locationId,
+        AirQualityReading currentAirQuality,
+        WeatherReading currentWeather
     ) {
         if (currentAirQuality != null && currentWeather != null) {
             return new Readings(currentAirQuality, currentWeather);
         }
 
-        var refreshResult = dataIngestionService.refreshFromDataSources(locationId);
+        var refreshResult = refreshLocationDataUseCase.refresh(locationId);
 
         AirQualityReading refreshedAirQuality = currentAirQuality != null
-                ? currentAirQuality
-                : refreshResult.airQuality()
+            ? currentAirQuality
+            : refreshResult.airQuality()
                 .orElseGet(() -> airQualityRepository.findLatestByLocation(locationId).orElse(null));
         WeatherReading refreshedWeather = currentWeather != null
-                ? currentWeather
-                : refreshResult.weather()
+            ? currentWeather
+            : refreshResult.weather()
                 .orElseGet(() -> weatherRepository.findLatestByLocation(locationId).orElse(null));
 
         return new Readings(refreshedAirQuality, refreshedWeather);
@@ -109,36 +138,13 @@ public class LocationQueryService implements GetLocationSummaryUseCase, GetLocat
         return Optional.of(runConditionEvaluator.evaluate(airQuality, weather));
     }
 
-    public Page<LocationSummaryView> getAllSummaries(int page, int size) {
-        Pageable pageable = PageRequest.of(page, size);
-        Page<Location> locations = locationRepository.findAll(pageable);
-
-        return locations.map(location -> {
-            LocationId locationId = location.getId();
-            AirQualityReading airQuality = airQualityRepository.findLatestByLocation(locationId).orElse(null);
-            WeatherReading weather = weatherRepository.findLatestByLocation(locationId).orElse(null);
-
-            // Fetch if missing
-            Readings readings = ensureReadings(locationId, airQuality, weather);
-            airQuality = readings.airQuality();
-            weather = readings.weather();
-
-            Optional<RunCondition> runCondition = buildRunCondition(airQuality, weather);
-            return new LocationSummaryView(
-                    locationId,
-                    location.getName(),
-                    airQuality != null ? airQuality.getAqi().value() : 0,
-                    weather != null ? weather.getTemperature().valueCelsius() : 0.0,
-                    weather != null ? weather.getHumidity().percentage() : 0.0,
-                    runCondition.map(rc -> rc.verdict().name()).orElse(RunVerdict.ACCEPTABLE.name()),
-                    runCondition.map(rc -> rc.healthRisk().message()).orElse("Data unavailable")
-            );
-        });
-    }
-
     private record Readings(
-            AirQualityReading airQuality,
-            WeatherReading weather
+        AirQualityReading airQuality,
+        WeatherReading weather
     ) {
     }
 }
+
+
+
+
